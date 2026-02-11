@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Basra Weather Desk</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">ب</div>
+        <div>
+          <div class="title">Basra Weather Desk</div>
+          <div class="subtitle">واجهة نوافذ تتفاعل مع الطقس الحقيقي</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span class="badge" id="badge">…</span>
+        <span class="badge subtle" id="coords">البصرة</span>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- Clock -->
+      <section class="card card--hero" data-window>
+        <div class="card__title">ساعة بغداد</div>
+        <div class="clock">
+          <div class="clock__time" id="bgTime">--:--</div>
+          <div class="clock__meta" id="bgDate">---</div>
+        </div>
+      </section>
+
+      <!-- Weather -->
+      <section class="card" data-window>
+        <div class="card__title">طقس البصرة</div>
+        <div class="weather">
+          <div class="weather__big">
+            <div class="temp" id="temp">--</div>
+            <div class="unit">°C</div>
+          </div>
+          <div class="weather__rows">
+            <div class="row"><span>الرياح</span><b id="wind">--</b> <span class="muted">m/s</span></div>
+            <div class="row"><span>الرطوبة</span><b id="hum">--</b> <span class="muted">%</span></div>
+            <div class="row"><span>الإحساس</span><b id="feel">--</b> <span class="muted">°C</span></div>
+          </div>
+        </div>
+        <div class="footnote" id="updated">آخر تحديث: —</div>
+      </section>
+
+      <!-- Arabic Calendar -->
+      <section class="card" data-window>
+        <div class="card__title">التقويم العربي</div>
+        <div class="cal">
+          <div class="cal__line" id="greg">—</div>
+          <div class="cal__line cal__line--alt" id="hijri">—</div>
+          <div class="cal__mini" id="weekday">—</div>
+        </div>
+        <div class="divider"></div>
+        <div class="tips">
+          <div class="tip">يعرض التاريخ الميلادي + الهجري حسب جهازك (بدون مكتبات).</div>
+        </div>
+      </section>
+
+      <!-- Basra info -->
+      <section class="card" data-window>
+        <div class="card__title">عن محافظة البصرة</div>
+        <article class="about">
+          <p>
+            البصرة من أهم محافظات جنوب العراق، تطل على شط العرب وتشكل بوابة بحرية وتجارية
+            عبر ميناء أم قصر، وتشتهر بالنخيل والأنهار والمناطق التراثية والأسواق الشعبية.
+          </p>
+          <ul>
+            <li>موقع استراتيجي قرب الخليج</li>
+            <li>مراكز نفط وصناعة وموانئ</li>
+            <li>تنوع بيئي: أهوار، أنهار، زراعة</li>
+          </ul>
+          <p class="muted">
+            (تقدر تبدّل النص بأي محتوى أطول/رسمي حسب مشروعك.)
+          </p>
+        </article>
+      </section>
+
+      <!-- Google Maps (movable) -->
+      <section class="card card--wide" data-window>
+        <div class="card__title">خريطة البصرة (Google Maps)</div>
+        <div class="mapWrap">
+          <!-- iframe: سحب/تكبير داخل الخريطة -->
+          <iframe
+            class="map"
+            loading="lazy"
+            referrerpolicy="no-referrer-when-downgrade"
+            src="https://www.google.com/maps?q=Basra%20Iraq&z=12&output=embed">
+          </iframe>
+        </div>
+        <div class="footnote">اسحب الخريطة وكبّر/صغّر داخل النافذة.</div>
+      </section>
+    </main>
+
+    <!-- FX overlay -->
+    <div id="fx-root" aria-hidden="true">
+      <div id="puddle"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

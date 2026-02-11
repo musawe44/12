@@ -1,798 +1,545 @@
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Basra — Legendary Weather Desk</title>
-  <style>
-    :root{
-      --bg1:#05070f;
-      --bg2:#070f22;
-      --glass: rgba(255,255,255,.075);
-      --stroke: rgba(255,255,255,.14);
-      --text: rgba(255,255,255,.90);
-      --muted: rgba(255,255,255,.62);
-      --shadow: 0 18px 60px rgba(0,0,0,.55);
-      --radius: 18px;
-    }
+// ==UserScript==
+// @name         Basra Legendary Cloth Wind FX (Pro)
+// @namespace    basra-cloth-wind-fx
+// @version      2.0.0
+// @description  Turns windows into cloth that ripples, stretches and folds realistically with wind gusts (SVG displacement + spring dynamics + flow field wind)
+// @match        https://musawe44.github.io/12*
+// @grant        none
+// ==/UserScript==
 
-    *{ box-sizing:border-box; }
-    html,body{ height:100%; }
-    body{
-      margin:0;
-      color:var(--text);
-      font-family: system-ui, -apple-system, "SF Pro Display", "SF Pro Text", Segoe UI, Roboto, Arial;
-      background:
-        radial-gradient(1200px 700px at 70% 10%, rgba(90,140,255,.18), transparent 60%),
-        radial-gradient(900px 600px at 18% 44%, rgba(255,110,160,.10), transparent 60%),
-        radial-gradient(900px 620px at 80% 80%, rgba(120,255,215,.08), transparent 60%),
-        linear-gradient(180deg, var(--bg1), var(--bg2));
-      overflow-x:hidden;
-    }
+(() => {
+  "use strict";
 
-    /* subtle noise (fancy) */
-    body::before{
-      content:"";
+  /**************************************************************************
+   * 0) WHY THIS WORKS (realistic without 3000 lines)
+   * - “Cloth look on text” is hard if you only move DIVs.
+//   * - SVG feTurbulence + feDisplacementMap can warp the rendered pixels
+   *   of an element (including text) smoothly, which looks like fabric.
+   * - Then we drive that filter with spring physics + gust impulses.
+   * - Wind visuals: flow-field particles + streak ribbons on Canvas.
+   **************************************************************************/
+
+  /**************************************************************************
+   * 1) CONFIG
+   **************************************************************************/
+  const CFG = {
+    // Targets (your “windows”)
+    windowSelector: ".card, [data-window], section.card",
+
+    // Weather input: you can connect your own windMS here if you want.
+    // For now: we read wind from the page if you have #wind or we fallback.
+    windRead: {
+      selector: "#wind", // your weather widget
+      parse: (txt) => {
+        // expects "10.2" or "10.2 m/s"
+        const m = String(txt).match(/-?\d+(\.\d+)?/);
+        return m ? Number(m[0]) : null;
+      }
+    },
+
+    // Wind scaling (m/s -> visual strength)
+    wind: {
+      calmMS: 2.0,
+      windyMS: 8.0,
+      stormMS: 12.0,
+      maxStrength: 2.2,     // clamp strength
+      directionDeg: 15,     // base direction (degrees) if you don’t have real direction
+    },
+
+    // Cloth warp (SVG displacement)
+    cloth: {
+      baseFrequency: 0.012,      // turbulence frequency base
+      freqWindBoost: 0.018,      // increases with wind
+      displacementBase: 6,       // base pixels
+      displacementMax: 44,       // max pixels at high wind
+      octaves: 2,                // turbulence detail
+      // “anchor” feel is faked by applying stronger warp near bottom using a mask gradient
+      anchorPower: 1.7,
+    },
+
+    // Fold / wrap behavior (gust)
+    fold: {
+      gustChancePerSecAtWindy: 0.30, // gust probability rate
+      minIntervalSec: 1.8,
+      strengthAtStorm: 1.0,
+      durationMs: 650
+    },
+
+    // Spring dynamics driving filter params
+    spring: {
+      // for displacement strength
+      k: 70,
+      d: 11,
+      // for global sway rotation
+      kRot: 40,
+      dRot: 9,
+    },
+
+    // Wind Canvas visuals
+    visuals: {
+      enable: true,
+      dprMax: 2,
+      particles: 900,        // high -> more epic
+      streaks: 3,            // streak ribbons per gust
+      flowScale: 0.004,
+      flowSpeed: 0.010,
+      particleAlphaMin: 0.05,
+      particleAlphaMax: 0.22
+    },
+
+    // Safety/perf
+    perf: {
+      maxWindows: 10,
+      reduceMotionRespect: true
+    }
+  };
+
+  const prefersReducedMotion = CFG.perf.reduceMotionRespect &&
+    window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /**************************************************************************
+   * 2) UTIL
+   **************************************************************************/
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  function nowSec() { return performance.now() / 1000; }
+
+  function readWindMS() {
+    try {
+      const el = document.querySelector(CFG.windRead.selector);
+      if (!el) return null;
+      return CFG.windRead.parse(el.textContent);
+    } catch { return null; }
+  }
+
+  function windStrengthFromMS(wms) {
+    const w = Number.isFinite(wms) ? wms : 6;
+    const s = (w - CFG.wind.calmMS) / (CFG.wind.stormMS - CFG.wind.calmMS);
+    return clamp(s * CFG.wind.maxStrength, 0, CFG.wind.maxStrength);
+  }
+
+  /**************************************************************************
+   * 3) INJECT STYLES (cloth look + fold animation)
+   **************************************************************************/
+  const style = document.createElement("style");
+  style.textContent = `
+    .bwfx-root{
       position:fixed; inset:0;
       pointer-events:none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.25'/%3E%3C/svg%3E");
-      opacity:.12;
-      mix-blend-mode: overlay;
+      z-index:2147483647;
     }
-
-    #app{ min-height:100%; padding:22px; }
-
-    .topbar{
-      display:flex; align-items:center; justify-content:space-between;
-      gap:16px;
-      padding:14px 16px;
-      border:1px solid var(--stroke);
-      border-radius: var(--radius);
-      background: rgba(255,255,255,.04);
-      backdrop-filter: blur(12px);
-      box-shadow: var(--shadow);
-      position:sticky;
-      top:14px;
-      z-index:20;
-    }
-
-    .brand{ display:flex; align-items:center; gap:12px; }
-    .logo{
-      width:40px; height:40px;
-      border-radius:14px;
-      display:grid; place-items:center;
-      background: rgba(255,255,255,.08);
-      border:1px solid var(--stroke);
-      font-weight:900;
-      box-shadow: 0 12px 40px rgba(0,0,0,.35);
-    }
-    .title{ font-weight:800; letter-spacing:.2px; }
-    .subtitle{ color:var(--muted); font-size:12px; margin-top:2px; }
-
-    .status{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-    .badge{
-      border:1px solid var(--stroke);
-      background: rgba(255,255,255,.06);
-      padding:6px 10px;
-      border-radius:999px;
-      font-size:12px;
-      box-shadow: 0 12px 30px rgba(0,0,0,.25);
-    }
-    .badge.subtle{ color:var(--muted); }
-
-    .grid{
-      margin-top:18px;
-      display:grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap:14px;
-    }
-
-    .card{
-      grid-column: span 4;
-      border-radius: var(--radius);
-      border:1px solid var(--stroke);
-      background: var(--glass);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
-      overflow:hidden;
-      position:relative;
-      min-height: 190px;
-      transform-style: preserve-3d;
-      will-change: transform, filter;
-    }
-
-    .card::after{
-      content:"";
-      position:absolute; inset:0;
+    canvas.bwfx-wind{
+      position:fixed; inset:0;
+      width:100vw; height:100vh;
       pointer-events:none;
-      background:
-        radial-gradient(700px 200px at 15% 0%, rgba(255,255,255,.16), transparent 50%),
-        radial-gradient(520px 200px at 90% 10%, rgba(120,255,220,.10), transparent 55%),
-        linear-gradient(180deg, rgba(255,255,255,.05), transparent 40%);
-      opacity:.70;
+      z-index:2147483646;
       mix-blend-mode: screen;
     }
 
-    .card--hero{ grid-column: span 5; min-height: 250px; }
-    .card--wide{ grid-column: span 7; min-height: 340px; }
-
-    .card__title{
-      padding:12px 14px;
-      border-bottom:1px solid rgba(255,255,255,.10);
-      background: rgba(255,255,255,.05);
-      font-size:13px;
-      color: rgba(255,255,255,.92);
-      font-weight:700;
-      position:relative;
-      z-index:2;
-    }
-
-    .divider{ height:1px; background: rgba(255,255,255,.10); margin:12px 0; }
-    .muted{ color:var(--muted); }
-    .footnote{ padding:10px 14px 14px; color:var(--muted); font-size:12px; position:relative; z-index:2; }
-
-    /* Clock */
-    .clock{ padding:18px 16px 16px; position:relative; z-index:2; }
-    .clock__time{
-      font-size:76px;
-      line-height:1;
-      font-weight:900;
-      letter-spacing:1px;
-      text-shadow: 0 18px 55px rgba(0,0,0,.55);
-    }
-    .clock__meta{
-      margin-top:10px;
-      color:var(--muted);
-      font-size:14px;
-    }
-
-    /* Weather */
-    .weather{ padding:14px; display:flex; gap:14px; align-items:center; position:relative; z-index:2; }
-    .weather__big{ display:flex; align-items:baseline; gap:8px; }
-    .temp{ font-size:58px; font-weight:900; letter-spacing:.4px; }
-    .unit{ color:var(--muted); font-weight:700; }
-    .weather__rows{ display:grid; gap:8px; flex:1; }
-    .row{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-    .row b{ font-size:16px; }
-    .row .muted{ font-size:12px; }
-
-    /* Calendar */
-    .cal{ padding:16px 14px 0; position:relative; z-index:2; }
-    .cal__line{ font-size:18px; font-weight:800; }
-    .cal__line--alt{ margin-top:10px; font-size:16px; color: rgba(220,255,245,.90); }
-    .cal__mini{ margin-top:10px; color:var(--muted); font-size:12px; }
-
-    /* About */
-    .about{ padding:14px; color: rgba(255,255,255,.84); position:relative; z-index:2; }
-    .about p{ margin:0 0 10px; }
-    .about ul{ margin:0 18px 10px 0; color: rgba(255,255,255,.80); }
-    .about li{ margin:6px 0; }
-
-    /* Map */
-    .mapWrap{ padding:12px 12px 0; position:relative; z-index:2; }
-    .map{
-      width:100%;
-      height:270px;
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:14px;
-    }
-
-    /* Responsive */
-    @media (max-width: 1100px){
-      .card{ grid-column: span 6; }
-      .card--hero{ grid-column: span 12; }
-      .card--wide{ grid-column: span 12; }
-    }
-    @media (max-width: 620px){
-      #app{ padding:14px; }
-      .card{ grid-column: span 12; }
-      .clock__time{ font-size:58px; }
-    }
-
-    /* -------------------- LEGENDARY PHYSICS WINDOW (Flag Mesh Overlay) -------------------- */
-    [data-flagwin]{
-      transform-style:preserve-3d;
+    /* Cloth: apply filter + keep it smooth */
+    .bwfx-cloth{
       will-change: transform, filter;
-    }
-    .flag-mesh{
-      position:absolute;
-      inset:0;
-      pointer-events:none;
-      border-radius: inherit;
-      overflow:hidden;
-      z-index:1; /* تحت المحتوى */
-      mix-blend-mode: overlay;
-      opacity: .95;
-    }
-    .flag-slice{
-      position:absolute;
-      left:0; right:0;
-      backdrop-filter: blur(16px);
-      will-change: transform, opacity;
-      background: rgba(255,255,255,.07);
-      border-top:1px solid rgba(255,255,255,.05);
-      border-bottom:1px solid rgba(0,0,0,.10);
+      transform-style: preserve-3d;
+      backface-visibility: hidden;
+      -webkit-font-smoothing: antialiased;
+      position: relative;
     }
 
-    /* Heat mode (optional “melt-ish” highlight) */
-    .fx-hot{
-      filter: saturate(1.25) contrast(1.06);
+    /* Fold / wrap: looks like a flag curling then snapping back */
+    @keyframes bwfx-fold {
+      0%   { transform: perspective(1000px) rotateY(0deg) rotateZ(0deg) skewX(0deg) scaleX(1); }
+      35%  { transform: perspective(1000px) rotateY(-22deg) rotateZ(-4deg) skewX(10deg) scaleX(.92); }
+      60%  { transform: perspective(1000px) rotateY(28deg)  rotateZ(3deg)  skewX(-12deg) scaleX(.90); }
+      100% { transform: perspective(1000px) rotateY(0deg) rotateZ(0deg) skewX(0deg) scaleX(1); }
     }
-    .fx-hot::before{
+    .bwfx-fold{
+      animation: bwfx-fold ${CFG.fold.durationMs}ms cubic-bezier(.2,.85,.2,1);
+    }
+
+    /* Optional subtle “heat gloss” (not melt dripping, just hot shimmer) */
+    .bwfx-hot::before{
       content:"";
-      position:absolute; inset:-40px;
+      position:absolute; inset:-30px;
       pointer-events:none;
       background:
-        radial-gradient(120px 60px at 20% 0%, rgba(255,140,90,.18), transparent 70%),
-        radial-gradient(160px 90px at 80% 10%, rgba(255,220,140,.14), transparent 65%),
-        radial-gradient(180px 110px at 40% 75%, rgba(255,140,90,.10), transparent 70%);
+        radial-gradient(140px 80px at 25% 0%, rgba(255,140,90,.16), transparent 70%),
+        radial-gradient(180px 90px at 85% 10%, rgba(255,220,140,.12), transparent 65%);
       filter: blur(10px);
       opacity:.9;
       z-index:0;
     }
 
-    /* Wind canvas overlay */
-    #windCanvas{
-      position:fixed;
-      inset:0;
-      width:100vw; height:100vh;
-      pointer-events:none;
-      z-index:999999;
-      mix-blend-mode: screen;
+    /* Prevent filter from breaking map iframe: keep map stable (we still sway/fold container) */
+    .bwfx-has-iframe{
+      filter: none !important;
     }
-  </style>
-</head>
+  `;
+  document.documentElement.appendChild(style);
 
-<body>
-  <div id="app">
-    <header class="topbar">
-      <div class="brand">
-        <div class="logo">ب</div>
-        <div>
-          <div class="title">Basra — Legendary Weather Desk</div>
-          <div class="subtitle">نوافذ تتفاعل كـ راية مع رياح حقيقية + طقس البصرة + ساعة بغداد</div>
-        </div>
-      </div>
+  /**************************************************************************
+   * 4) SVG FILTER FACTORY (per window)
+   * We create:
+   *   feTurbulence -> feDisplacementMap
+   * plus a vertical mask gradient to imitate “anchored at top, looser at bottom”.
+   **************************************************************************/
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "0");
+  svg.setAttribute("height", "0");
+  svg.style.position = "fixed";
+  svg.style.left = "-9999px";
+  svg.style.top = "-9999px";
+  document.documentElement.appendChild(svg);
 
-      <div class="status">
-        <span class="badge" id="badge">…</span>
-        <span class="badge subtle" id="cityTag">البصرة</span>
-        <span class="badge subtle" id="hint">اسحب الخريطة / جرّب تكبير</span>
-      </div>
-    </header>
+  let filterIdCounter = 0;
 
-    <main class="grid">
-      <!-- Clock -->
-      <section class="card card--hero" data-window data-flagwin>
-        <div class="card__title">ساعة بغداد</div>
-        <div class="clock">
-          <div class="clock__time" id="bgTime">--:--</div>
-          <div class="clock__meta" id="bgDate">---</div>
-        </div>
-      </section>
+  function createClothFilter() {
+    const id = `bwfx-filter-${++filterIdCounter}`;
 
-      <!-- Weather -->
-      <section class="card" data-window data-flagwin>
-        <div class="card__title">طقس البصرة (حي)</div>
-        <div class="weather">
-          <div class="weather__big">
-            <div class="temp" id="temp">--</div>
-            <div class="unit">°C</div>
-          </div>
-          <div class="weather__rows">
-            <div class="row"><span>الرياح</span><b id="wind">--</b> <span class="muted">m/s</span></div>
-            <div class="row"><span>الرطوبة</span><b id="hum">--</b> <span class="muted">%</span></div>
-            <div class="row"><span>الإحساس</span><b id="feel">--</b> <span class="muted">°C</span></div>
-          </div>
-        </div>
-        <div class="footnote" id="updated">آخر تحديث: —</div>
-      </section>
+    const defs = document.createElementNS(svgNS, "defs");
+    const filter = document.createElementNS(svgNS, "filter");
+    filter.setAttribute("id", id);
+    filter.setAttribute("x", "-20%");
+    filter.setAttribute("y", "-20%");
+    filter.setAttribute("width", "140%");
+    filter.setAttribute("height", "140%");
+    filter.setAttribute("filterUnits", "objectBoundingBox");
 
-      <!-- Arabic Calendar -->
-      <section class="card" data-window data-flagwin>
-        <div class="card__title">التقويم العربي</div>
-        <div class="cal">
-          <div class="cal__line" id="greg">—</div>
-          <div class="cal__line cal__line--alt" id="hijri">—</div>
-          <div class="cal__mini" id="weekday">—</div>
-        </div>
-        <div class="divider"></div>
-        <div class="footnote">يعتمد على Intl داخل المتصفح (ميلادي + هجري).</div>
-      </section>
+    const turb = document.createElementNS(svgNS, "feTurbulence");
+    turb.setAttribute("type", "fractalNoise");
+    turb.setAttribute("baseFrequency", String(CFG.cloth.baseFrequency));
+    turb.setAttribute("numOctaves", String(CFG.cloth.octaves));
+    turb.setAttribute("seed", String(Math.floor(rand(1, 9999))));
+    turb.setAttribute("result", "noise");
 
-      <!-- Basra info -->
-      <section class="card" data-window data-flagwin>
-        <div class="card__title">عن محافظة البصرة</div>
-        <article class="about">
-          <p>
-            البصرة محافظة جنوبية مهمة جداً، تطل على شط العرب وتمثل بوابة العراق البحرية.
-            تمتاز بالموانئ (أم قصر)، والنخيل، والأنهار، وموقع اقتصادي وتجاري استراتيجي.
-          </p>
-          <ul>
-            <li>قرب الخليج وممرات بحرية</li>
-            <li>مراكز نفط وصناعة وموانئ</li>
-            <li>تنوع بيئي: أهوار/أنهار/زراعة</li>
-          </ul>
-          <p class="muted">تقدر تبدّل النص لأي محتوى رسمي أطول.</p>
-        </article>
-      </section>
+    // create an alpha gradient mask to make warp stronger near bottom:
+    // We do this by blending noise with a vertical gradient via feComponentTransfer-ish trick.
+    // Simpler: use feColorMatrix to keep noise, then feDisplacementMap uses it; we modulate scale in JS
+    // and also offset phase per element for natural feel.
 
-      <!-- Google Maps -->
-      <section class="card card--wide" data-window data-flagwin>
-        <div class="card__title">خريطة البصرة (Google Maps)</div>
-        <div class="mapWrap">
-          <iframe
-            class="map"
-            loading="lazy"
-            referrerpolicy="no-referrer-when-downgrade"
-            src="https://www.google.com/maps?q=Basra%20Iraq&z=12&output=embed"></iframe>
-        </div>
-        <div class="footnote">اسحب/كبّر/صغّر داخل الخريطة.</div>
-      </section>
-    </main>
-  </div>
+    const disp = document.createElementNS(svgNS, "feDisplacementMap");
+    disp.setAttribute("in", "SourceGraphic");
+    disp.setAttribute("in2", "noise");
+    disp.setAttribute("scale", String(CFG.cloth.displacementBase));
+    disp.setAttribute("xChannelSelector", "R");
+    disp.setAttribute("yChannelSelector", "G");
 
-  <canvas id="windCanvas"></canvas>
+    filter.appendChild(turb);
+    filter.appendChild(disp);
+    defs.appendChild(filter);
+    svg.appendChild(defs);
 
-  <script>
-  (() => {
-    "use strict";
+    return { id, turb, disp };
+  }
 
-    /* =========================
-       إعدادات “أسطوريّة” (عدّلها)
-       ========================= */
-    const QUALITY = {
-      slices: 34,        // 24-44 (أكثر = تموّج أنعم)
-      particles: 780,    // 450-1100 (أكثر = رياح أقوى)
-      ribbons: 3,        // كم خيط ريح ينولد بالهبة
-      dprMax: 2
-    };
+  /**************************************************************************
+   * 5) SPRING MODEL (smooth realistic motion)
+   **************************************************************************/
+  function makeSpring(x0 = 0) {
+    return { x: x0, v: 0 };
+  }
+  function springStep(s, target, dt, k, d) {
+    // classic damped spring: x'' = k*(target-x) - d*x'
+    const a = k * (target - s.x) - d * s.v;
+    s.v += a * dt;
+    s.x += s.v * dt;
+    return s.x;
+  }
 
-    const CFG = {
-      BASRA: { lat: 30.5085, lon: 47.7804, name: "البصرة" },
-      TZ: "Asia/Baghdad",
+  /**************************************************************************
+   * 6) WINDOW ATTACH: apply cloth filter + drive it
+   **************************************************************************/
+  function hasIframe(el) {
+    return !!el.querySelector("iframe");
+  }
 
-      // عتبات
-      hotTempC: 30,
-      windyMS: 8,
-      stormyMS: 12,
+  function attachToWindows() {
+    const list = Array.from(document.querySelectorAll(CFG.windowSelector))
+      .filter(el => el && el.getBoundingClientRect && el.offsetParent !== null)
+      .slice(0, CFG.perf.maxWindows);
 
-      // فيزياء “راية”
-      stiffness: 65,      // رجوع
-      damping: 10.5,      // تخميد
-      neighbor: 44,       // شد بين الشرائح (ينعم)
-      windForce: 1.75,    // قوة الريح الأساسية على الراية
-      gustKick: 3.5,      // تضخيم الهبة
-      maxWarpPx: 56,      // أقصى تموّج أفقي
-      maxStretch: 0.12,   // استطالة (إحساس قماش)
+    return list.map((el) => {
+      el.classList.add("bwfx-cloth");
+      if (hasIframe(el)) el.classList.add("bwfx-has-iframe");
 
-      // حقل الرياح (Flow Field)
-      flowScale: 0.0040,
-      flowSpeed: 0.010,
-
-      weatherRefreshMs: 10 * 60 * 1000
-    };
-
-    // عناصر UI
-    const $ = (id) => document.getElementById(id);
-    const els = {
-      badge: $("badge"),
-      cityTag: $("cityTag"),
-      temp: $("temp"),
-      wind: $("wind"),
-      hum: $("hum"),
-      feel: $("feel"),
-      updated: $("updated"),
-      bgTime: $("bgTime"),
-      bgDate: $("bgDate"),
-      greg: $("greg"),
-      hijri: $("hijri"),
-      weekday: $("weekday"),
-      canvas: $("windCanvas"),
-    };
-
-    const cards = Array.from(document.querySelectorAll("[data-window]"));
-    const flagTargets = Array.from(document.querySelectorAll("[data-flagwin]"));
-
-    const clamp = (v,a,b)=>Math.max(a, Math.min(b, v));
-    const rand = (a,b)=>a + Math.random()*(b-a);
-
-    /* =========================
-       ساعة بغداد + التقويم
-       ========================= */
-    function tickClock(){
-      const now = new Date();
-
-      const timeFmt = new Intl.DateTimeFormat("ar-IQ", {
-        timeZone: CFG.TZ,
-        hour: "2-digit", minute: "2-digit",
-        hour12: false
-      });
-      const dateFmt = new Intl.DateTimeFormat("ar-IQ", {
-        timeZone: CFG.TZ,
-        year:"numeric", month:"long", day:"2-digit"
-      });
-
-      els.bgTime.textContent = timeFmt.format(now);
-      els.bgDate.textContent = dateFmt.format(now);
-
-      const greg = new Intl.DateTimeFormat("ar-IQ", {
-        timeZone: CFG.TZ,
-        weekday:"long", year:"numeric", month:"long", day:"2-digit"
-      }).format(now);
-
-      const hijri = new Intl.DateTimeFormat("ar-SA-u-ca-islamic", {
-        timeZone: CFG.TZ,
-        weekday:"long", year:"numeric", month:"long", day:"2-digit"
-      }).format(now);
-
-      els.greg.textContent = "الميلادي: " + greg;
-      els.hijri.textContent = "الهجري: " + hijri;
-      els.weekday.textContent = "المنطقة الزمنية: بغداد";
-    }
-    tickClock();
-    setInterval(tickClock, 1000);
-
-    /* =========================
-       طقس البصرة (Open-Meteo)
-       ========================= */
-    let state = { tempC: null, windMS: null, hum: null, feelC: null };
-
-    async function fetchBasraWeather(){
-      const b = CFG.BASRA;
-      const url =
-        `https://api.open-meteo.com/v1/forecast` +
-        `?latitude=${encodeURIComponent(b.lat)}` +
-        `&longitude=${encodeURIComponent(b.lon)}` +
-        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m` +
-        `&timezone=auto`;
-
-      const r = await fetch(url);
-      if(!r.ok) throw new Error("weather http " + r.status);
-      const j = await r.json();
-      const c = j.current || {};
-      return {
-        tempC: Number(c.temperature_2m),
-        hum: Number(c.relative_humidity_2m),
-        feelC: Number(c.apparent_temperature),
-        windMS: Number(c.wind_speed_10m),
-        updatedISO: c.time
-      };
-    }
-
-    function updateBadge(){
-      const t = state.tempC, w = state.windMS;
-      const hot = Number.isFinite(t) && t > CFG.hotTempC;
-      const windy = Number.isFinite(w) && w > CFG.windyMS;
-      const storm = Number.isFinite(w) && w > CFG.stormyMS;
-
-      let txt = "هادئ";
-      if (storm) txt = "رياح قوية جداً";
-      else if (hot && windy) txt = "حار + رياح";
-      else if (hot) txt = "حار";
-      else if (windy) txt = "رياح";
-
-      els.badge.textContent = txt;
-
-      // heat highlight (اختياري)
-      cards.forEach(c => c.classList.toggle("fx-hot", hot));
-    }
-
-    async function refreshWeather(){
-      try{
-        els.cityTag.textContent = CFG.BASRA.name;
-        const w = await fetchBasraWeather();
-
-        state = { tempC: w.tempC, windMS: w.windMS, hum: w.hum, feelC: w.feelC };
-
-        els.temp.textContent = Number.isFinite(w.tempC) ? w.tempC.toFixed(1) : "--";
-        els.wind.textContent = Number.isFinite(w.windMS) ? w.windMS.toFixed(1) : "--";
-        els.hum.textContent  = Number.isFinite(w.hum) ? w.hum.toFixed(0) : "--";
-        els.feel.textContent = Number.isFinite(w.feelC) ? w.feelC.toFixed(1) : "--";
-
-        if(w.updatedISO) els.updated.textContent = "آخر تحديث: " + new Date(w.updatedISO).toLocaleString("ar-IQ");
-
-        updateBadge();
-      }catch(e){
-        console.warn(e);
-        els.updated.textContent = "تعذر جلب الطقس الآن.";
+      const filter = createClothFilter();
+      // Apply filter to element (except iframe case)
+      if (!el.classList.contains("bwfx-has-iframe")) {
+        el.style.filter = `url(#${filter.id})`;
       }
-    }
-    refreshWeather();
-    setInterval(refreshWeather, CFG.weatherRefreshMs);
 
-    /* =========================
-       محرك رياح واقعي + راية للنوافذ
-       ========================= */
+      // state
+      return {
+        el,
+        filter,
+        // springs
+        dispS: makeSpring(CFG.cloth.displacementBase),
+        freqS: makeSpring(CFG.cloth.baseFrequency),
+        rotS: makeSpring(0),
+        // gust/fold timers
+        lastFoldSec: 0,
+        // per-window phase offset
+        phase: rand(0, 1000),
+      };
+    });
+  }
 
-    // Canvas setup
-    const canvas = els.canvas;
-    const ctx = canvas.getContext("2d", { alpha: true });
-    function resizeCanvas(){
-      const dpr = Math.max(1, Math.min(QUALITY.dprMax, window.devicePixelRatio || 1));
+  const windows = attachToWindows();
+
+  /**************************************************************************
+   * 7) WIND VISUALS (Flow Field + particles + streaks)
+   **************************************************************************/
+  let canvas = null, ctx = null;
+  let particles = [];
+  let streaks = [];
+
+  function initWindCanvas() {
+    if (!CFG.visuals.enable || prefersReducedMotion) return;
+
+    canvas = document.createElement("canvas");
+    canvas.className = "bwfx-wind";
+    document.documentElement.appendChild(canvas);
+    ctx = canvas.getContext("2d", { alpha: true });
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(CFG.visuals.dprMax, window.devicePixelRatio || 1));
       canvas.width = Math.floor(innerWidth * dpr);
-      canvas.height= Math.floor(innerHeight * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
       canvas.style.width = "100vw";
-      canvas.style.height= "100vh";
-      ctx.setTransform(dpr,0,0,dpr,0,0);
+      canvas.style.height = "100vh";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
-    addEventListener("resize", resizeCanvas);
-    resizeCanvas();
+    window.addEventListener("resize", resize);
+    resize();
 
-    // Tiny value-noise (fast flow field)
-    const N = {
+    // value noise
+    const Noise = {
       seed: 1337,
-      hash(x,y){
-        let n = x*374761393 + y*668265263 + N.seed*1442695041;
+      hash(x, y) {
+        let n = x * 374761393 + y * 668265263 + Noise.seed * 1442695041;
         n = (n ^ (n >> 13)) * 1274126177;
         return ((n ^ (n >> 16)) >>> 0) / 4294967295;
       },
-      smooth(t){ return t*t*(3-2*t); },
-      noise(x,y){
+      smooth(t) { return t * t * (3 - 2 * t); },
+      noise(x, y) {
         const xi = Math.floor(x), yi = Math.floor(y);
         const xf = x - xi, yf = y - yi;
-        const a = N.hash(xi,yi);
-        const b = N.hash(xi+1,yi);
-        const c = N.hash(xi,yi+1);
-        const d = N.hash(xi+1,yi+1);
-        const u = N.smooth(xf), v = N.smooth(yf);
-        return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;
+        const a = Noise.hash(xi, yi);
+        const b = Noise.hash(xi + 1, yi);
+        const c = Noise.hash(xi, yi + 1);
+        const d = Noise.hash(xi + 1, yi + 1);
+        const u = Noise.smooth(xf), v = Noise.smooth(yf);
+        return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
       }
     };
 
-    // Build “flag mesh overlay” per card
-    function buildMesh(el, slices){
-      const mesh = document.createElement("div");
-      mesh.className = "flag-mesh";
-      el.appendChild(mesh);
-
-      const arr = [];
-      for(let i=0;i<slices;i++){
-        const s = document.createElement("div");
-        s.className = "flag-slice";
-        const top = (i/slices)*100;
-        const h = 100/slices;
-        s.style.top = `${top}%`;
-        s.style.height = `${h}%`;
-
-        // subtle shading per slice
-        const shade = 0.055 + i*(0.0018);
-        s.style.background = `rgba(255,255,255,${shade})`;
-        mesh.appendChild(s);
-        arr.push(s);
-      }
-      return arr;
-    }
-
-    function makeCloth1D(count){
-      return new Array(count).fill(0).map(()=>({ x:0, v:0, a:0 }));
-    }
-
-    const flagWindows = flagTargets.map(el => {
-      const slices = QUALITY.slices;
-      const meshSlices = buildMesh(el, slices);
-      return {
-        el,
-        slices: meshSlices,
-        pts: makeCloth1D(slices),
-        bend: 0, bendV: 0
-      };
-    });
-
-    // Particles for wind
-    const particles = [];
-    function resetParticle(p){
-      p.x = Math.random()*innerWidth;
-      p.y = Math.random()*innerHeight;
+    function resetParticle(p) {
+      p.x = Math.random() * innerWidth;
+      p.y = Math.random() * innerHeight;
       p.vx = 0; p.vy = 0;
-      p.life = 160 + Math.random()*260;
-      p.size = 0.7 + Math.random()*1.9;
-      p.alpha = 0.06 + Math.random()*0.22;
+      p.life = 160 + Math.random() * 260;
+      p.size = 0.6 + Math.random() * 1.9;
+      p.alpha = rand(CFG.visuals.particleAlphaMin, CFG.visuals.particleAlphaMax);
     }
-    for(let i=0;i<QUALITY.particles;i++){
+
+    particles = [];
+    for (let i = 0; i < CFG.visuals.particles; i++) {
       const p = {};
       resetParticle(p);
       particles.push(p);
     }
 
-    // Ribbons: “خيوط/شرائط” هواء قوية
-    const ribbons = [];
-    function spawnRibbon(strength){
-      const y = 40 + Math.random()*(innerHeight-120);
+    function spawnStreak(wStrength) {
+      const y = rand(60, innerHeight - 120);
       const segs = 22;
-      const r = {
-        x: -260,
+      const s = {
+        x: -240,
         y,
-        pts: Array.from({length:segs}, (_,k)=>({x:-260 - k*16, y:y})),
-        life: 75 + Math.random()*45,
-        a: 0.10 + strength*0.22
+        pts: Array.from({ length: segs }, (_, k) => ({ x: -240 - k * 16, y })),
+        life: 75 + Math.random() * 45,
+        a: 0.10 + wStrength * 0.22
       };
-      ribbons.push(r);
+      streaks.push(s);
     }
 
-    // Gust controller
-    let gust = 0;
-    let gustT = 0;
+    return { Noise, resetParticle, spawnStreak };
+  }
 
-    let last = performance.now();
-    let t = 0;
+  const windViz = initWindCanvas();
 
-    function windStrengthFromMS(windMS){
-      // تحويل م/ث إلى قوة “فخمة”
-      const w = Number.isFinite(windMS) ? windMS : 6;
-      return clamp((w - 2) / 10, 0, 2.2);
+  /**************************************************************************
+   * 8) MAIN LOOP (physics + cloth filter + fold + visuals)
+   **************************************************************************/
+  let lastT = performance.now();
+  let t = 0;
+  let gust = 0;
+  let gustTimer = 0;
+
+  function maybeFold(win, wStrength, wms) {
+    const sec = nowSec();
+    if (sec - win.lastFoldSec < CFG.fold.minIntervalSec) return;
+    if (!Number.isFinite(wms) || wms < CFG.wind.windyMS) return;
+
+    // probability rate scales with wind
+    const rate = CFG.fold.gustChancePerSecAtWindy * clamp((wms - CFG.wind.windyMS) / 6, 0, 1.4);
+    if (Math.random() < rate * (1 / 60)) { // approx per frame
+      win.lastFoldSec = sec;
+      win.el.classList.remove("bwfx-fold");
+      void win.el.offsetWidth; // restart
+      win.el.classList.add("bwfx-fold");
+    }
+  }
+
+  function step(now) {
+    const dt = Math.min(0.03, (now - lastT) / 1000);
+    lastT = now;
+    t += dt;
+
+    // Wind input
+    const wms = readWindMS();
+    const wStrength = windStrengthFromMS(wms);
+
+    // Gust impulse (drives extra power)
+    gustTimer -= dt;
+    if (!prefersReducedMotion && gustTimer <= 0 && (wms ?? 0) > CFG.wind.windyMS && Math.random() < (0.18 + wStrength * 0.14)) {
+      gust = 0.9 + Math.random() * 1.8;
+      gustTimer = 0.35 + Math.random() * 0.75;
+
+      // spawn strong streaks
+      if (windViz && CFG.visuals.enable) {
+        for (let i = 0; i < CFG.visuals.streaks; i++) windViz.spawnStreak(wStrength);
+      }
+    } else {
+      // decay
+      gust *= Math.pow(0.001, dt);
     }
 
-    function animate(now){
-      const dt = Math.min(0.03, (now - last)/1000);
-      last = now;
-      t += dt;
+    // Drive each window cloth
+    for (const w of windows) {
+      // Targets for filter
+      const targetDisp = lerp(
+        CFG.cloth.displacementBase,
+        CFG.cloth.displacementMax,
+        clamp(wStrength / CFG.wind.maxStrength, 0, 1)
+      ) + gust * 14;
 
-      const ws = windStrengthFromMS(state.windMS);
-      const windPx = ws * CFG.maxWarpPx;
+      const targetFreq = CFG.cloth.baseFrequency + wStrength * CFG.cloth.freqWindBoost;
 
-      // هبة رياح
-      gustT -= dt;
-      if(gustT <= 0 && (state.windMS ?? 0) > CFG.windyMS && Math.random() < (0.18 + ws*0.15)){
-        gust = 0.9 + Math.random()*1.8;
-        gustT = 0.35 + Math.random()*0.75;
-        for(let i=0;i<QUALITY.ribbons;i++) spawnRibbon(ws);
-      }else{
-        gust *= Math.pow(0.001, dt); // decay
+      // Springs
+      const disp = springStep(w.dispS, targetDisp, dt, CFG.spring.k, CFG.spring.d);
+      const freq = springStep(w.freqS, targetFreq, dt, CFG.spring.k, CFG.spring.d);
+
+      // Global sway rotation (like flag pole effect)
+      const rotTarget = (wStrength * 3.2 + gust * 6.0) * Math.sin(t * (1.4 + wStrength * 0.6) + w.phase);
+      const rot = springStep(w.rotS, rotTarget, dt, CFG.spring.kRot, CFG.spring.dRot);
+
+      // Apply filter params (skip if iframe)
+      if (!w.el.classList.contains("bwfx-has-iframe")) {
+        w.filter.turb.setAttribute("baseFrequency", String(freq));
+        // animate seed a bit for “moving cloth texture”
+        // (small change so it doesn’t flicker)
+        const seed = 1000 + Math.floor((t * 12 + w.phase) % 2000);
+        w.filter.turb.setAttribute("seed", String(seed));
+        w.filter.disp.setAttribute("scale", String(disp));
       }
 
-      // --- Cloth simulation on windows ---
-      for(const fw of flagWindows){
-        const r = fw.el.getBoundingClientRect();
-        const pts = fw.pts;
+      // Apply transform (sway + tiny stretch)
+      const stretch = 1 + clamp((Math.abs(rot) / 18) * 0.05, 0, 0.08);
+      w.el.style.transform = `perspective(1000px) rotateY(${rot}deg) skewX(${rot * 0.35}deg) scaleX(${stretch})`;
 
-        for(let i=0;i<pts.length;i++){
-          const p = pts[i];
-          const yy = i/(pts.length-1);
+      // Fold on gusts
+      maybeFold(w, wStrength, wms);
+    }
 
-          const worldX = r.left + r.width*0.6;
-          const worldY = r.top + yy*r.height;
+    // Wind visuals
+    if (ctx && windViz && CFG.visuals.enable && !prefersReducedMotion) {
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
 
-          const n = N.noise(worldX*CFG.flowScale, (worldY*CFG.flowScale) + t*CFG.flowSpeed);
-          const swirl = (n - 0.5);
+      const ws = wStrength;
+      const Noise = windViz.Noise;
 
-          // Force profile: stronger toward bottom (like a flag)
-          const profile = (0.55 + yy*0.95);
+      // base drift direction (rightwards) + tiny angle
+      const dir = (CFG.wind.directionDeg * Math.PI) / 180;
+      const baseDX = Math.cos(dir);
+      const baseDY = Math.sin(dir);
 
-          const force =
-            (windPx * profile) +
-            (swirl * windPx * 0.65) +
-            (gust * windPx * CFG.gustKick * (0.55 + yy));
+      const speedBoost = 0.85 + ws * 3.0 + gust * 0.6;
 
-          // springs
-          const spring = -p.x * CFG.stiffness;
+      for (const p of particles) {
+        const nx = Noise.noise(p.x * CFG.visuals.flowScale, p.y * CFG.visuals.flowScale + t * CFG.visuals.flowSpeed);
+        const ny = Noise.noise(p.x * CFG.visuals.flowScale + 111, p.y * CFG.visuals.flowScale + t * CFG.visuals.flowSpeed);
 
-          let neigh = 0;
-          if(i>0) neigh += (pts[i-1].x - p.x);
-          if(i<pts.length-1) neigh += (pts[i+1].x - p.x);
-          neigh *= CFG.neighbor;
+        const ang = (nx * 2 - 1) * 1.55 + (ws * 1.35);
+        const fx = Math.cos(ang) * (0.6 + ws * 2.6) + baseDX * (0.8 + ws * 2.0);
+        const fy = (ny - 0.5) * (1.0 + ws * 1.3) + baseDY * (0.6 + ws * 1.2);
 
-          // anchor (top more stable)
-          const lock = Math.exp(-i*0.60);
-          const anchorPull = -(p.x) * (CFG.stiffness * 2.2) * lock;
-
-          p.a = (spring + neigh + anchorPull + force*CFG.windForce);
-
-          p.v += p.a * dt;
-          p.v *= Math.exp(-CFG.damping * dt);
-          p.x += p.v * dt;
-
-          p.x = clamp(p.x, -CFG.maxWarpPx*1.2, CFG.maxWarpPx*1.8);
-        }
-
-        const avg = pts.reduce((s,p)=>s+p.x,0)/pts.length;
-        fw.bendV += (avg*0.0022 - fw.bend) * (18*dt);
-        fw.bendV *= Math.exp(-7.5*dt);
-        fw.bend += fw.bendV;
-
-        // apply slices transform (gives fabric-like waves)
-        for(let i=0;i<fw.slices.length;i++){
-          const s = fw.slices[i];
-          const p = pts[i];
-          const prev = pts[Math.max(0,i-1)].x;
-          const next = pts[Math.min(pts.length-1,i+1)].x;
-          const slope = (next - prev);
-
-          const rot = clamp(slope*0.16, -14, 14);
-          const tx  = p.x;
-          const stretch = 1 + clamp(Math.abs(slope)*0.0024, 0, CFG.maxStretch);
-
-          s.style.transform = `translateX(${tx}px) rotate(${rot}deg) scaleX(${stretch})`;
-          s.style.opacity = String(0.90 - Math.abs(tx)/180);
-        }
-
-        // overall perspective transform on card (real flag feel)
-        const ry = clamp(fw.bend*14, -18, 18);
-        const sk = clamp(fw.bend*7, -10, 10);
-
-        fw.el.style.transform =
-          `perspective(1000px) rotateY(${ry}deg) skewX(${sk}deg) translateZ(0)`;
-      }
-
-      // --- Wind visuals (Particles + Ribbons) ---
-      ctx.clearRect(0,0,innerWidth,innerHeight);
-
-      // particles
-      const speedBoost = 0.85 + ws*3.0;
-      for(const p of particles){
-        const nx = N.noise(p.x*CFG.flowScale, p.y*CFG.flowScale + t*CFG.flowSpeed);
-        const ny = N.noise(p.x*CFG.flowScale + 111, p.y*CFG.flowScale + t*CFG.flowSpeed);
-
-        const ang = (nx*2-1)*1.55 + (ws*1.35); // drift right with wind
-        const fx = Math.cos(ang) * (0.6 + ws*2.6);
-        const fy = (ny-0.5) * (1.0 + ws*1.3);
-
-        p.vx = (p.vx + fx*dt*120) * 0.985;
-        p.vy = (p.vy + fy*dt*120) * 0.985;
+        p.vx = (p.vx + fx * dt * 120) * 0.985;
+        p.vy = (p.vy + fy * dt * 120) * 0.985;
 
         p.x += p.vx * dt * 10 * speedBoost;
         p.y += p.vy * dt * 10 * speedBoost;
 
         p.life -= 1;
-        if(p.x < -60 || p.x > innerWidth+60 || p.y < -60 || p.y > innerHeight+60 || p.life <= 0){
-          resetParticle(p);
-          p.x = -40;
+        if (p.x < -80 || p.x > innerWidth + 80 || p.y < -80 || p.y > innerHeight + 80 || p.life <= 0) {
+          windViz.resetParticle(p);
+          p.x = -60; // enter from left
         }
 
-        ctx.globalAlpha = p.alpha * (0.40 + ws*0.85);
+        ctx.globalAlpha = p.alpha * (0.40 + ws * 0.85);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(235,248,255,1)";
         ctx.fill();
       }
 
-      // ribbons
-      for(let i=ribbons.length-1;i>=0;i--){
-        const r = ribbons[i];
-        r.life -= 1;
+      // streak ribbons
+      for (let i = streaks.length - 1; i >= 0; i--) {
+        const s = streaks[i];
+        s.life -= 1;
 
-        const adv = (13 + ws*26) * speedBoost;
-        r.x += adv;
+        const adv = (14 + ws * 26) * speedBoost;
+        s.x += adv;
 
-        // push ribbon points like a tail
-        r.pts[0].x = r.x;
-        r.pts[0].y = r.y + (N.noise(r.x*0.01, t*0.7) - 0.5) * (18 + ws*18);
+        s.pts[0].x = s.x;
+        s.pts[0].y = s.y + (Noise.noise(s.x * 0.01, t * 0.7) - 0.5) * (18 + ws * 18 + gust * 10);
 
-        for(let k=1;k<r.pts.length;k++){
-          const prev = r.pts[k-1];
-          const cur = r.pts[k];
-          const follow = 0.18 + ws*0.06;
+        for (let k = 1; k < s.pts.length; k++) {
+          const prev = s.pts[k - 1];
+          const cur = s.pts[k];
+          const follow = 0.18 + ws * 0.06;
           cur.x += (prev.x - cur.x) * follow;
           cur.y += (prev.y - cur.y) * follow;
-
-          // add tiny turbulence
-          cur.y += (N.noise((cur.x+77)*0.01, (cur.y+33)*0.01 + t*0.9) - 0.5) * (1.6 + ws*2.6);
+          cur.y += (Noise.noise((cur.x + 77) * 0.01, (cur.y + 33) * 0.01 + t * 0.9) - 0.5) * (1.6 + ws * 2.6);
         }
 
-        // draw
-        ctx.globalAlpha = r.a * (0.55 + ws*0.7);
-        ctx.lineWidth = 2.6 + ws*1.2;
+        ctx.globalAlpha = s.a * (0.55 + ws * 0.7);
+        ctx.lineWidth = 2.6 + ws * 1.2 + gust * 0.6;
         ctx.strokeStyle = "rgba(240,252,255,1)";
         ctx.beginPath();
-        ctx.moveTo(r.pts[0].x, r.pts[0].y);
-        for(let k=1;k<r.pts.length;k++){
-          ctx.lineTo(r.pts[k].x, r.pts[k].y);
-        }
+        ctx.moveTo(s.pts[0].x, s.pts[0].y);
+        for (let k = 1; k < s.pts.length; k++) ctx.lineTo(s.pts[k].x, s.pts[k].y);
         ctx.stroke();
 
-        if(r.life <= 0 || r.x > innerWidth + 420){
-          ribbons.splice(i,1);
-        }
+        if (s.life <= 0 || s.x > innerWidth + 520) streaks.splice(i, 1);
       }
 
-      // reset alpha
       ctx.globalAlpha = 1;
-
-      requestAnimationFrame(animate);
     }
-    requestAnimationFrame(animate);
 
-  })();
-  </script>
-</body>
-</html>
+    requestAnimationFrame(step);
+  }
+
+  /**************************************************************************
+   * 9) START
+   **************************************************************************/
+  if (windows.length === 0) {
+    console.warn("[BWFX] No windows found. Check CFG.windowSelector.");
+    return;
+  }
+
+  requestAnimationFrame(step);
+
+})();

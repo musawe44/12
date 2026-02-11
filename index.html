@@ -3,8 +3,244 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Basra Weather Desk</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Basra — Legendary Weather Desk</title>
+  <style>
+    :root{
+      --bg1:#05070f;
+      --bg2:#070f22;
+      --glass: rgba(255,255,255,.075);
+      --stroke: rgba(255,255,255,.14);
+      --text: rgba(255,255,255,.90);
+      --muted: rgba(255,255,255,.62);
+      --shadow: 0 18px 60px rgba(0,0,0,.55);
+      --radius: 18px;
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      color:var(--text);
+      font-family: system-ui, -apple-system, "SF Pro Display", "SF Pro Text", Segoe UI, Roboto, Arial;
+      background:
+        radial-gradient(1200px 700px at 70% 10%, rgba(90,140,255,.18), transparent 60%),
+        radial-gradient(900px 600px at 18% 44%, rgba(255,110,160,.10), transparent 60%),
+        radial-gradient(900px 620px at 80% 80%, rgba(120,255,215,.08), transparent 60%),
+        linear-gradient(180deg, var(--bg1), var(--bg2));
+      overflow-x:hidden;
+    }
+
+    /* subtle noise (fancy) */
+    body::before{
+      content:"";
+      position:fixed; inset:0;
+      pointer-events:none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.25'/%3E%3C/svg%3E");
+      opacity:.12;
+      mix-blend-mode: overlay;
+    }
+
+    #app{ min-height:100%; padding:22px; }
+
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:16px;
+      padding:14px 16px;
+      border:1px solid var(--stroke);
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.04);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow);
+      position:sticky;
+      top:14px;
+      z-index:20;
+    }
+
+    .brand{ display:flex; align-items:center; gap:12px; }
+    .logo{
+      width:40px; height:40px;
+      border-radius:14px;
+      display:grid; place-items:center;
+      background: rgba(255,255,255,.08);
+      border:1px solid var(--stroke);
+      font-weight:900;
+      box-shadow: 0 12px 40px rgba(0,0,0,.35);
+    }
+    .title{ font-weight:800; letter-spacing:.2px; }
+    .subtitle{ color:var(--muted); font-size:12px; margin-top:2px; }
+
+    .status{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .badge{
+      border:1px solid var(--stroke);
+      background: rgba(255,255,255,.06);
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:12px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.25);
+    }
+    .badge.subtle{ color:var(--muted); }
+
+    .grid{
+      margin-top:18px;
+      display:grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap:14px;
+    }
+
+    .card{
+      grid-column: span 4;
+      border-radius: var(--radius);
+      border:1px solid var(--stroke);
+      background: var(--glass);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      overflow:hidden;
+      position:relative;
+      min-height: 190px;
+      transform-style: preserve-3d;
+      will-change: transform, filter;
+    }
+
+    .card::after{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      background:
+        radial-gradient(700px 200px at 15% 0%, rgba(255,255,255,.16), transparent 50%),
+        radial-gradient(520px 200px at 90% 10%, rgba(120,255,220,.10), transparent 55%),
+        linear-gradient(180deg, rgba(255,255,255,.05), transparent 40%);
+      opacity:.70;
+      mix-blend-mode: screen;
+    }
+
+    .card--hero{ grid-column: span 5; min-height: 250px; }
+    .card--wide{ grid-column: span 7; min-height: 340px; }
+
+    .card__title{
+      padding:12px 14px;
+      border-bottom:1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.05);
+      font-size:13px;
+      color: rgba(255,255,255,.92);
+      font-weight:700;
+      position:relative;
+      z-index:2;
+    }
+
+    .divider{ height:1px; background: rgba(255,255,255,.10); margin:12px 0; }
+    .muted{ color:var(--muted); }
+    .footnote{ padding:10px 14px 14px; color:var(--muted); font-size:12px; position:relative; z-index:2; }
+
+    /* Clock */
+    .clock{ padding:18px 16px 16px; position:relative; z-index:2; }
+    .clock__time{
+      font-size:76px;
+      line-height:1;
+      font-weight:900;
+      letter-spacing:1px;
+      text-shadow: 0 18px 55px rgba(0,0,0,.55);
+    }
+    .clock__meta{
+      margin-top:10px;
+      color:var(--muted);
+      font-size:14px;
+    }
+
+    /* Weather */
+    .weather{ padding:14px; display:flex; gap:14px; align-items:center; position:relative; z-index:2; }
+    .weather__big{ display:flex; align-items:baseline; gap:8px; }
+    .temp{ font-size:58px; font-weight:900; letter-spacing:.4px; }
+    .unit{ color:var(--muted); font-weight:700; }
+    .weather__rows{ display:grid; gap:8px; flex:1; }
+    .row{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+    .row b{ font-size:16px; }
+    .row .muted{ font-size:12px; }
+
+    /* Calendar */
+    .cal{ padding:16px 14px 0; position:relative; z-index:2; }
+    .cal__line{ font-size:18px; font-weight:800; }
+    .cal__line--alt{ margin-top:10px; font-size:16px; color: rgba(220,255,245,.90); }
+    .cal__mini{ margin-top:10px; color:var(--muted); font-size:12px; }
+
+    /* About */
+    .about{ padding:14px; color: rgba(255,255,255,.84); position:relative; z-index:2; }
+    .about p{ margin:0 0 10px; }
+    .about ul{ margin:0 18px 10px 0; color: rgba(255,255,255,.80); }
+    .about li{ margin:6px 0; }
+
+    /* Map */
+    .mapWrap{ padding:12px 12px 0; position:relative; z-index:2; }
+    .map{
+      width:100%;
+      height:270px;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:14px;
+    }
+
+    /* Responsive */
+    @media (max-width: 1100px){
+      .card{ grid-column: span 6; }
+      .card--hero{ grid-column: span 12; }
+      .card--wide{ grid-column: span 12; }
+    }
+    @media (max-width: 620px){
+      #app{ padding:14px; }
+      .card{ grid-column: span 12; }
+      .clock__time{ font-size:58px; }
+    }
+
+    /* -------------------- LEGENDARY PHYSICS WINDOW (Flag Mesh Overlay) -------------------- */
+    [data-flagwin]{
+      transform-style:preserve-3d;
+      will-change: transform, filter;
+    }
+    .flag-mesh{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      border-radius: inherit;
+      overflow:hidden;
+      z-index:1; /* تحت المحتوى */
+      mix-blend-mode: overlay;
+      opacity: .95;
+    }
+    .flag-slice{
+      position:absolute;
+      left:0; right:0;
+      backdrop-filter: blur(16px);
+      will-change: transform, opacity;
+      background: rgba(255,255,255,.07);
+      border-top:1px solid rgba(255,255,255,.05);
+      border-bottom:1px solid rgba(0,0,0,.10);
+    }
+
+    /* Heat mode (optional “melt-ish” highlight) */
+    .fx-hot{
+      filter: saturate(1.25) contrast(1.06);
+    }
+    .fx-hot::before{
+      content:"";
+      position:absolute; inset:-40px;
+      pointer-events:none;
+      background:
+        radial-gradient(120px 60px at 20% 0%, rgba(255,140,90,.18), transparent 70%),
+        radial-gradient(160px 90px at 80% 10%, rgba(255,220,140,.14), transparent 65%),
+        radial-gradient(180px 110px at 40% 75%, rgba(255,140,90,.10), transparent 70%);
+      filter: blur(10px);
+      opacity:.9;
+      z-index:0;
+    }
+
+    /* Wind canvas overlay */
+    #windCanvas{
+      position:fixed;
+      inset:0;
+      width:100vw; height:100vh;
+      pointer-events:none;
+      z-index:999999;
+      mix-blend-mode: screen;
+    }
+  </style>
 </head>
 
 <body>
@@ -13,20 +249,21 @@
       <div class="brand">
         <div class="logo">ب</div>
         <div>
-          <div class="title">Basra Weather Desk</div>
-          <div class="subtitle">واجهة نوافذ تتفاعل مع الطقس الحقيقي</div>
+          <div class="title">Basra — Legendary Weather Desk</div>
+          <div class="subtitle">نوافذ تتفاعل كـ راية مع رياح حقيقية + طقس البصرة + ساعة بغداد</div>
         </div>
       </div>
 
       <div class="status">
         <span class="badge" id="badge">…</span>
-        <span class="badge subtle" id="coords">البصرة</span>
+        <span class="badge subtle" id="cityTag">البصرة</span>
+        <span class="badge subtle" id="hint">اسحب الخريطة / جرّب تكبير</span>
       </div>
     </header>
 
     <main class="grid">
       <!-- Clock -->
-      <section class="card card--hero" data-window>
+      <section class="card card--hero" data-window data-flagwin>
         <div class="card__title">ساعة بغداد</div>
         <div class="clock">
           <div class="clock__time" id="bgTime">--:--</div>
@@ -35,8 +272,8 @@
       </section>
 
       <!-- Weather -->
-      <section class="card" data-window>
-        <div class="card__title">طقس البصرة</div>
+      <section class="card" data-window data-flagwin>
+        <div class="card__title">طقس البصرة (حي)</div>
         <div class="weather">
           <div class="weather__big">
             <div class="temp" id="temp">--</div>
@@ -52,7 +289,7 @@
       </section>
 
       <!-- Arabic Calendar -->
-      <section class="card" data-window>
+      <section class="card" data-window data-flagwin>
         <div class="card__title">التقويم العربي</div>
         <div class="cal">
           <div class="cal__line" id="greg">—</div>
@@ -60,52 +297,502 @@
           <div class="cal__mini" id="weekday">—</div>
         </div>
         <div class="divider"></div>
-        <div class="tips">
-          <div class="tip">يعرض التاريخ الميلادي + الهجري حسب جهازك (بدون مكتبات).</div>
-        </div>
+        <div class="footnote">يعتمد على Intl داخل المتصفح (ميلادي + هجري).</div>
       </section>
 
       <!-- Basra info -->
-      <section class="card" data-window>
+      <section class="card" data-window data-flagwin>
         <div class="card__title">عن محافظة البصرة</div>
         <article class="about">
           <p>
-            البصرة من أهم محافظات جنوب العراق، تطل على شط العرب وتشكل بوابة بحرية وتجارية
-            عبر ميناء أم قصر، وتشتهر بالنخيل والأنهار والمناطق التراثية والأسواق الشعبية.
+            البصرة محافظة جنوبية مهمة جداً، تطل على شط العرب وتمثل بوابة العراق البحرية.
+            تمتاز بالموانئ (أم قصر)، والنخيل، والأنهار، وموقع اقتصادي وتجاري استراتيجي.
           </p>
           <ul>
-            <li>موقع استراتيجي قرب الخليج</li>
+            <li>قرب الخليج وممرات بحرية</li>
             <li>مراكز نفط وصناعة وموانئ</li>
-            <li>تنوع بيئي: أهوار، أنهار، زراعة</li>
+            <li>تنوع بيئي: أهوار/أنهار/زراعة</li>
           </ul>
-          <p class="muted">
-            (تقدر تبدّل النص بأي محتوى أطول/رسمي حسب مشروعك.)
-          </p>
+          <p class="muted">تقدر تبدّل النص لأي محتوى رسمي أطول.</p>
         </article>
       </section>
 
-      <!-- Google Maps (movable) -->
-      <section class="card card--wide" data-window>
+      <!-- Google Maps -->
+      <section class="card card--wide" data-window data-flagwin>
         <div class="card__title">خريطة البصرة (Google Maps)</div>
         <div class="mapWrap">
-          <!-- iframe: سحب/تكبير داخل الخريطة -->
           <iframe
             class="map"
             loading="lazy"
             referrerpolicy="no-referrer-when-downgrade"
-            src="https://www.google.com/maps?q=Basra%20Iraq&z=12&output=embed">
-          </iframe>
+            src="https://www.google.com/maps?q=Basra%20Iraq&z=12&output=embed"></iframe>
         </div>
-        <div class="footnote">اسحب الخريطة وكبّر/صغّر داخل النافذة.</div>
+        <div class="footnote">اسحب/كبّر/صغّر داخل الخريطة.</div>
       </section>
     </main>
-
-    <!-- FX overlay -->
-    <div id="fx-root" aria-hidden="true">
-      <div id="puddle"></div>
-    </div>
   </div>
 
-  <script src="app.js"></script>
+  <canvas id="windCanvas"></canvas>
+
+  <script>
+  (() => {
+    "use strict";
+
+    /* =========================
+       إعدادات “أسطوريّة” (عدّلها)
+       ========================= */
+    const QUALITY = {
+      slices: 34,        // 24-44 (أكثر = تموّج أنعم)
+      particles: 780,    // 450-1100 (أكثر = رياح أقوى)
+      ribbons: 3,        // كم خيط ريح ينولد بالهبة
+      dprMax: 2
+    };
+
+    const CFG = {
+      BASRA: { lat: 30.5085, lon: 47.7804, name: "البصرة" },
+      TZ: "Asia/Baghdad",
+
+      // عتبات
+      hotTempC: 30,
+      windyMS: 8,
+      stormyMS: 12,
+
+      // فيزياء “راية”
+      stiffness: 65,      // رجوع
+      damping: 10.5,      // تخميد
+      neighbor: 44,       // شد بين الشرائح (ينعم)
+      windForce: 1.75,    // قوة الريح الأساسية على الراية
+      gustKick: 3.5,      // تضخيم الهبة
+      maxWarpPx: 56,      // أقصى تموّج أفقي
+      maxStretch: 0.12,   // استطالة (إحساس قماش)
+
+      // حقل الرياح (Flow Field)
+      flowScale: 0.0040,
+      flowSpeed: 0.010,
+
+      weatherRefreshMs: 10 * 60 * 1000
+    };
+
+    // عناصر UI
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      badge: $("badge"),
+      cityTag: $("cityTag"),
+      temp: $("temp"),
+      wind: $("wind"),
+      hum: $("hum"),
+      feel: $("feel"),
+      updated: $("updated"),
+      bgTime: $("bgTime"),
+      bgDate: $("bgDate"),
+      greg: $("greg"),
+      hijri: $("hijri"),
+      weekday: $("weekday"),
+      canvas: $("windCanvas"),
+    };
+
+    const cards = Array.from(document.querySelectorAll("[data-window]"));
+    const flagTargets = Array.from(document.querySelectorAll("[data-flagwin]"));
+
+    const clamp = (v,a,b)=>Math.max(a, Math.min(b, v));
+    const rand = (a,b)=>a + Math.random()*(b-a);
+
+    /* =========================
+       ساعة بغداد + التقويم
+       ========================= */
+    function tickClock(){
+      const now = new Date();
+
+      const timeFmt = new Intl.DateTimeFormat("ar-IQ", {
+        timeZone: CFG.TZ,
+        hour: "2-digit", minute: "2-digit",
+        hour12: false
+      });
+      const dateFmt = new Intl.DateTimeFormat("ar-IQ", {
+        timeZone: CFG.TZ,
+        year:"numeric", month:"long", day:"2-digit"
+      });
+
+      els.bgTime.textContent = timeFmt.format(now);
+      els.bgDate.textContent = dateFmt.format(now);
+
+      const greg = new Intl.DateTimeFormat("ar-IQ", {
+        timeZone: CFG.TZ,
+        weekday:"long", year:"numeric", month:"long", day:"2-digit"
+      }).format(now);
+
+      const hijri = new Intl.DateTimeFormat("ar-SA-u-ca-islamic", {
+        timeZone: CFG.TZ,
+        weekday:"long", year:"numeric", month:"long", day:"2-digit"
+      }).format(now);
+
+      els.greg.textContent = "الميلادي: " + greg;
+      els.hijri.textContent = "الهجري: " + hijri;
+      els.weekday.textContent = "المنطقة الزمنية: بغداد";
+    }
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    /* =========================
+       طقس البصرة (Open-Meteo)
+       ========================= */
+    let state = { tempC: null, windMS: null, hum: null, feelC: null };
+
+    async function fetchBasraWeather(){
+      const b = CFG.BASRA;
+      const url =
+        `https://api.open-meteo.com/v1/forecast` +
+        `?latitude=${encodeURIComponent(b.lat)}` +
+        `&longitude=${encodeURIComponent(b.lon)}` +
+        `&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m` +
+        `&timezone=auto`;
+
+      const r = await fetch(url);
+      if(!r.ok) throw new Error("weather http " + r.status);
+      const j = await r.json();
+      const c = j.current || {};
+      return {
+        tempC: Number(c.temperature_2m),
+        hum: Number(c.relative_humidity_2m),
+        feelC: Number(c.apparent_temperature),
+        windMS: Number(c.wind_speed_10m),
+        updatedISO: c.time
+      };
+    }
+
+    function updateBadge(){
+      const t = state.tempC, w = state.windMS;
+      const hot = Number.isFinite(t) && t > CFG.hotTempC;
+      const windy = Number.isFinite(w) && w > CFG.windyMS;
+      const storm = Number.isFinite(w) && w > CFG.stormyMS;
+
+      let txt = "هادئ";
+      if (storm) txt = "رياح قوية جداً";
+      else if (hot && windy) txt = "حار + رياح";
+      else if (hot) txt = "حار";
+      else if (windy) txt = "رياح";
+
+      els.badge.textContent = txt;
+
+      // heat highlight (اختياري)
+      cards.forEach(c => c.classList.toggle("fx-hot", hot));
+    }
+
+    async function refreshWeather(){
+      try{
+        els.cityTag.textContent = CFG.BASRA.name;
+        const w = await fetchBasraWeather();
+
+        state = { tempC: w.tempC, windMS: w.windMS, hum: w.hum, feelC: w.feelC };
+
+        els.temp.textContent = Number.isFinite(w.tempC) ? w.tempC.toFixed(1) : "--";
+        els.wind.textContent = Number.isFinite(w.windMS) ? w.windMS.toFixed(1) : "--";
+        els.hum.textContent  = Number.isFinite(w.hum) ? w.hum.toFixed(0) : "--";
+        els.feel.textContent = Number.isFinite(w.feelC) ? w.feelC.toFixed(1) : "--";
+
+        if(w.updatedISO) els.updated.textContent = "آخر تحديث: " + new Date(w.updatedISO).toLocaleString("ar-IQ");
+
+        updateBadge();
+      }catch(e){
+        console.warn(e);
+        els.updated.textContent = "تعذر جلب الطقس الآن.";
+      }
+    }
+    refreshWeather();
+    setInterval(refreshWeather, CFG.weatherRefreshMs);
+
+    /* =========================
+       محرك رياح واقعي + راية للنوافذ
+       ========================= */
+
+    // Canvas setup
+    const canvas = els.canvas;
+    const ctx = canvas.getContext("2d", { alpha: true });
+    function resizeCanvas(){
+      const dpr = Math.max(1, Math.min(QUALITY.dprMax, window.devicePixelRatio || 1));
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height= Math.floor(innerHeight * dpr);
+      canvas.style.width = "100vw";
+      canvas.style.height= "100vh";
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Tiny value-noise (fast flow field)
+    const N = {
+      seed: 1337,
+      hash(x,y){
+        let n = x*374761393 + y*668265263 + N.seed*1442695041;
+        n = (n ^ (n >> 13)) * 1274126177;
+        return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+      },
+      smooth(t){ return t*t*(3-2*t); },
+      noise(x,y){
+        const xi = Math.floor(x), yi = Math.floor(y);
+        const xf = x - xi, yf = y - yi;
+        const a = N.hash(xi,yi);
+        const b = N.hash(xi+1,yi);
+        const c = N.hash(xi,yi+1);
+        const d = N.hash(xi+1,yi+1);
+        const u = N.smooth(xf), v = N.smooth(yf);
+        return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;
+      }
+    };
+
+    // Build “flag mesh overlay” per card
+    function buildMesh(el, slices){
+      const mesh = document.createElement("div");
+      mesh.className = "flag-mesh";
+      el.appendChild(mesh);
+
+      const arr = [];
+      for(let i=0;i<slices;i++){
+        const s = document.createElement("div");
+        s.className = "flag-slice";
+        const top = (i/slices)*100;
+        const h = 100/slices;
+        s.style.top = `${top}%`;
+        s.style.height = `${h}%`;
+
+        // subtle shading per slice
+        const shade = 0.055 + i*(0.0018);
+        s.style.background = `rgba(255,255,255,${shade})`;
+        mesh.appendChild(s);
+        arr.push(s);
+      }
+      return arr;
+    }
+
+    function makeCloth1D(count){
+      return new Array(count).fill(0).map(()=>({ x:0, v:0, a:0 }));
+    }
+
+    const flagWindows = flagTargets.map(el => {
+      const slices = QUALITY.slices;
+      const meshSlices = buildMesh(el, slices);
+      return {
+        el,
+        slices: meshSlices,
+        pts: makeCloth1D(slices),
+        bend: 0, bendV: 0
+      };
+    });
+
+    // Particles for wind
+    const particles = [];
+    function resetParticle(p){
+      p.x = Math.random()*innerWidth;
+      p.y = Math.random()*innerHeight;
+      p.vx = 0; p.vy = 0;
+      p.life = 160 + Math.random()*260;
+      p.size = 0.7 + Math.random()*1.9;
+      p.alpha = 0.06 + Math.random()*0.22;
+    }
+    for(let i=0;i<QUALITY.particles;i++){
+      const p = {};
+      resetParticle(p);
+      particles.push(p);
+    }
+
+    // Ribbons: “خيوط/شرائط” هواء قوية
+    const ribbons = [];
+    function spawnRibbon(strength){
+      const y = 40 + Math.random()*(innerHeight-120);
+      const segs = 22;
+      const r = {
+        x: -260,
+        y,
+        pts: Array.from({length:segs}, (_,k)=>({x:-260 - k*16, y:y})),
+        life: 75 + Math.random()*45,
+        a: 0.10 + strength*0.22
+      };
+      ribbons.push(r);
+    }
+
+    // Gust controller
+    let gust = 0;
+    let gustT = 0;
+
+    let last = performance.now();
+    let t = 0;
+
+    function windStrengthFromMS(windMS){
+      // تحويل م/ث إلى قوة “فخمة”
+      const w = Number.isFinite(windMS) ? windMS : 6;
+      return clamp((w - 2) / 10, 0, 2.2);
+    }
+
+    function animate(now){
+      const dt = Math.min(0.03, (now - last)/1000);
+      last = now;
+      t += dt;
+
+      const ws = windStrengthFromMS(state.windMS);
+      const windPx = ws * CFG.maxWarpPx;
+
+      // هبة رياح
+      gustT -= dt;
+      if(gustT <= 0 && (state.windMS ?? 0) > CFG.windyMS && Math.random() < (0.18 + ws*0.15)){
+        gust = 0.9 + Math.random()*1.8;
+        gustT = 0.35 + Math.random()*0.75;
+        for(let i=0;i<QUALITY.ribbons;i++) spawnRibbon(ws);
+      }else{
+        gust *= Math.pow(0.001, dt); // decay
+      }
+
+      // --- Cloth simulation on windows ---
+      for(const fw of flagWindows){
+        const r = fw.el.getBoundingClientRect();
+        const pts = fw.pts;
+
+        for(let i=0;i<pts.length;i++){
+          const p = pts[i];
+          const yy = i/(pts.length-1);
+
+          const worldX = r.left + r.width*0.6;
+          const worldY = r.top + yy*r.height;
+
+          const n = N.noise(worldX*CFG.flowScale, (worldY*CFG.flowScale) + t*CFG.flowSpeed);
+          const swirl = (n - 0.5);
+
+          // Force profile: stronger toward bottom (like a flag)
+          const profile = (0.55 + yy*0.95);
+
+          const force =
+            (windPx * profile) +
+            (swirl * windPx * 0.65) +
+            (gust * windPx * CFG.gustKick * (0.55 + yy));
+
+          // springs
+          const spring = -p.x * CFG.stiffness;
+
+          let neigh = 0;
+          if(i>0) neigh += (pts[i-1].x - p.x);
+          if(i<pts.length-1) neigh += (pts[i+1].x - p.x);
+          neigh *= CFG.neighbor;
+
+          // anchor (top more stable)
+          const lock = Math.exp(-i*0.60);
+          const anchorPull = -(p.x) * (CFG.stiffness * 2.2) * lock;
+
+          p.a = (spring + neigh + anchorPull + force*CFG.windForce);
+
+          p.v += p.a * dt;
+          p.v *= Math.exp(-CFG.damping * dt);
+          p.x += p.v * dt;
+
+          p.x = clamp(p.x, -CFG.maxWarpPx*1.2, CFG.maxWarpPx*1.8);
+        }
+
+        const avg = pts.reduce((s,p)=>s+p.x,0)/pts.length;
+        fw.bendV += (avg*0.0022 - fw.bend) * (18*dt);
+        fw.bendV *= Math.exp(-7.5*dt);
+        fw.bend += fw.bendV;
+
+        // apply slices transform (gives fabric-like waves)
+        for(let i=0;i<fw.slices.length;i++){
+          const s = fw.slices[i];
+          const p = pts[i];
+          const prev = pts[Math.max(0,i-1)].x;
+          const next = pts[Math.min(pts.length-1,i+1)].x;
+          const slope = (next - prev);
+
+          const rot = clamp(slope*0.16, -14, 14);
+          const tx  = p.x;
+          const stretch = 1 + clamp(Math.abs(slope)*0.0024, 0, CFG.maxStretch);
+
+          s.style.transform = `translateX(${tx}px) rotate(${rot}deg) scaleX(${stretch})`;
+          s.style.opacity = String(0.90 - Math.abs(tx)/180);
+        }
+
+        // overall perspective transform on card (real flag feel)
+        const ry = clamp(fw.bend*14, -18, 18);
+        const sk = clamp(fw.bend*7, -10, 10);
+
+        fw.el.style.transform =
+          `perspective(1000px) rotateY(${ry}deg) skewX(${sk}deg) translateZ(0)`;
+      }
+
+      // --- Wind visuals (Particles + Ribbons) ---
+      ctx.clearRect(0,0,innerWidth,innerHeight);
+
+      // particles
+      const speedBoost = 0.85 + ws*3.0;
+      for(const p of particles){
+        const nx = N.noise(p.x*CFG.flowScale, p.y*CFG.flowScale + t*CFG.flowSpeed);
+        const ny = N.noise(p.x*CFG.flowScale + 111, p.y*CFG.flowScale + t*CFG.flowSpeed);
+
+        const ang = (nx*2-1)*1.55 + (ws*1.35); // drift right with wind
+        const fx = Math.cos(ang) * (0.6 + ws*2.6);
+        const fy = (ny-0.5) * (1.0 + ws*1.3);
+
+        p.vx = (p.vx + fx*dt*120) * 0.985;
+        p.vy = (p.vy + fy*dt*120) * 0.985;
+
+        p.x += p.vx * dt * 10 * speedBoost;
+        p.y += p.vy * dt * 10 * speedBoost;
+
+        p.life -= 1;
+        if(p.x < -60 || p.x > innerWidth+60 || p.y < -60 || p.y > innerHeight+60 || p.life <= 0){
+          resetParticle(p);
+          p.x = -40;
+        }
+
+        ctx.globalAlpha = p.alpha * (0.40 + ws*0.85);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+        ctx.fillStyle = "rgba(235,248,255,1)";
+        ctx.fill();
+      }
+
+      // ribbons
+      for(let i=ribbons.length-1;i>=0;i--){
+        const r = ribbons[i];
+        r.life -= 1;
+
+        const adv = (13 + ws*26) * speedBoost;
+        r.x += adv;
+
+        // push ribbon points like a tail
+        r.pts[0].x = r.x;
+        r.pts[0].y = r.y + (N.noise(r.x*0.01, t*0.7) - 0.5) * (18 + ws*18);
+
+        for(let k=1;k<r.pts.length;k++){
+          const prev = r.pts[k-1];
+          const cur = r.pts[k];
+          const follow = 0.18 + ws*0.06;
+          cur.x += (prev.x - cur.x) * follow;
+          cur.y += (prev.y - cur.y) * follow;
+
+          // add tiny turbulence
+          cur.y += (N.noise((cur.x+77)*0.01, (cur.y+33)*0.01 + t*0.9) - 0.5) * (1.6 + ws*2.6);
+        }
+
+        // draw
+        ctx.globalAlpha = r.a * (0.55 + ws*0.7);
+        ctx.lineWidth = 2.6 + ws*1.2;
+        ctx.strokeStyle = "rgba(240,252,255,1)";
+        ctx.beginPath();
+        ctx.moveTo(r.pts[0].x, r.pts[0].y);
+        for(let k=1;k<r.pts.length;k++){
+          ctx.lineTo(r.pts[k].x, r.pts[k].y);
+        }
+        ctx.stroke();
+
+        if(r.life <= 0 || r.x > innerWidth + 420){
+          ribbons.splice(i,1);
+        }
+      }
+
+      // reset alpha
+      ctx.globalAlpha = 1;
+
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+  })();
+  </script>
 </body>
 </html>
